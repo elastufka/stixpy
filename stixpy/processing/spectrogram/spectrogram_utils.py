@@ -106,7 +106,9 @@ def ogip_time_calcs(spec):
     specnum = np.arange(len(timecen)) +1
     channel = np.tile(np.arange(spec.n_energies), spec.n_times).reshape(spec.n_times,spec.n_energies) # array of n_times x n_channels
     #timecen =  tmjd + spec.data['timedel']/2.0 #doesn't actually do anything
-    exposure = np.sum((spec.data['timedel']/factor)*spec.livetime_fraction) #check that it's livetime fraction and not just livetime
+    eff_livetime_fraction = spec._get_eff_livetime_fraction(expanded = False)
+    exposure = np.sum((spec.data['timedel']/factor)*eff_livetime_fraction)
+    
     return {"specnum": specnum, "channel": channel, "timedel": spec.data['timedel']/factor, "timecen": timecen, "exposure": exposure}
 
 def shift_one_timestep(arr_in, axis = 0, shift_step = -1):

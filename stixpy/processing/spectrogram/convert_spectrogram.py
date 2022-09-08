@@ -262,7 +262,7 @@ def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0,
         spec.data_level = 4
         counts_spec = spec.counts
     else:
-        counts_spec = np.sum(spec.counts,axis=0) #sum over detectors
+        counts_spec = np.sum(spec.counts,axis=1) #sum over detectors
     spec.correct_counts()
     
     print(".......... BACKGROUND ........")
@@ -317,22 +317,7 @@ def bk_count_manipulations(bk_counts, duration, timedel, energy_bins, eff_ewidth
     bk_counts =  bk_counts/np.tile(eff_ewidth, ntimes).reshape(( ntimes,energy_bins.size)) #[:,energy_bins]
 
     return bk_counts
-    
-def get_eff_livetime_fraction(spec):
-    #corrected_counts = np.sum(corrected_counts.reshape((spec.n_energies, 1, spec.n_times)), axis=1) #not really necessary
-    if spec.data_level == 4:
-        eff_livetime_fraction = spec.counts_before_livetime/spec.counts
-    else:
-        eff_livetime_fraction = np.sum(spec.counts_before_livetime,axis=0)/spec.counts #,axis=0)
-    eff_livetime_fraction[np.isnan(eff_livetime_fraction)] = 1
-    #eff_livetime_fraction = np.mean(eff_livetime_fraction, axis = 0)
-    if eff_livetime_fraction.shape != (spec.n_times, spec.n_energies): #(spec.n_energies, spec.n_times):
-        eff_livetime_fraction_expanded = np.tile(eff_livetime_fraction,spec.n_energies).reshape((spec.n_energies,spec.n_times)) #unchanged for now
-    else:
-        eff_livetime_fraction_expanded = eff_livetime_fraction
-
-    return eff_livetime_fraction_expanded
-    
+        
 ### energy stuff for later
 #       emin = 1
 #       emax = 150
@@ -363,13 +348,10 @@ def get_eff_livetime_fraction(spec):
 def background_subtract(spectrogram, spectrogram_bk, counts_spec):
     corrected_counts = spectrogram.counts#.T
     corrected_error = spectrogram.error#.T
-
     corrected_error_bk = spectrogram_bk.error[...,0].T#[0]#np.sqrt(spectrogram_bk.error[0]**2)
-    print("corrected_error_bk")
-    print_arr_stats(corrected_error_bk)
 
-    ntimes_bk, n_energies_bk, _, _ = spectrogram_bk.data['counts'].shape #i think it's time, energy,pixels, detectors ...
-    #or time, detectors, pixels, detectors_used?
+    ntimes_bk, n_energies_bk, _, _ = spectrogram_bk.data['counts'].shape #check
+
     detectors_used = np.where(spectrogram.detector_mask == 1)[0]
     pixels_used = np.where(spectrogram.pixel_mask == 1)[0]
     n_detectors_bk = detectors_used.size
@@ -380,46 +362,23 @@ def background_subtract(spectrogram, spectrogram_bk, counts_spec):
     corrected_counts_bk = spectrogram_bk.counts[...,0].T#[:,0] #sum over detectors. shape goes from (30,32) to (32) #np.sum(spectrogram_bk.data['counts'][0][detectors_used][:,pixels_used,:],axis=1)#counts #should already be correct shape
     spec_in_bk = np.sum(spectrogram_bk.data['counts'][0][:,pixels_used,:][:,:,detectors_used],axis=1).T #sum over pixels
     
-    print('original corrected counts and spec_in')
-    print_arr_stats(corrected_counts_bk)
-    print_arr_stats(spec_in_bk)
-    #print(energy_bins)
-    fig,ax=plt.subplots()
-    ax.imshow(corrected_counts, origin = 'lower')
-    ax.set_aspect('auto')
-    ax.set_title("Corrected counts in ")
-    fig.show()
-    
     if spectrogram.t_axis.duration.ndim == 1:
         spectrogram.t_axis.duration = np.expand_dims(spectrogram.t_axis.duration,1)
     
     corrected_counts_bk = bk_count_manipulations(corrected_counts_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes)
-    print("corrected_counts_bk after")
-    print_arr_stats(corrected_counts_bk)
     spec_in_bk = bk_count_manipulations(spec_in_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes, name = 'spec_in_bk')
-    
     error_bk = bk_count_manipulations(corrected_error_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes, name = 'error_bk', error = True)
-    print("error_bk after")
-    print_arr_stats(error_bk)
 
     spec_in_corr = corrected_counts - corrected_counts_bk
     spec_in_uncorr = counts_spec - spec_in_bk #remove .T from counts_spec
     total_error = np.sqrt(corrected_error**2. + error_bk**2.)
-    print(f"total_error nzero: {np.count_nonzero(total_error==0)}")
-    
-    print_arr_stats(spec_in_corr)
-    eff_livetime_fraction_expanded = get_eff_livetime_fraction(spectrogram)
-    spec_in_corr *= eff_livetime_fraction_expanded #.T
-    total_error *= eff_livetime_fraction_expanded #.T
+
+    eff_livetime_fraction_expanded = spectrogram._get_eff_livetime_fraction()
+    spec_in_corr *= eff_livetime_fraction_expanded.T
+    total_error *= eff_livetime_fraction_expanded.T
     
     #energy correction too if needed
     
-    fig,ax=plt.subplots()
-    ax.imshow(spec_in_corr, origin = 'lower')
-    ax.set_aspect('auto')
-    ax.set_title("Background Corrected counts")
-    fig.show()
-    
-    rdict = {'spec_in_corr':spec_in_corr,'spec_in_uncorr':spec_in_uncorr,'corrected_counts':corrected_counts, 'corrected_counts_bk':corrected_counts_bk, 'counts_spec':counts_spec, 'spec_in_bk':spec_in_bk,'total_error':total_error,'corrected_error':corrected_error, 'error_bk':error_bk}
+    rdict = {'spec_in_corr':spec_in_corr,'spec_in_uncorr':spec_in_uncorr,'corrected_counts':corrected_counts, 'corrected_counts_bk':corrected_counts_bk, 'counts_spec':counts_spec, 'spec_in_bk':spec_in_bk,'total_error':total_error,'corrected_error':corrected_error, 'error_bk':error_bk, 'eff_lt':eff_livetime_fraction_expanded}
     return rdict
 

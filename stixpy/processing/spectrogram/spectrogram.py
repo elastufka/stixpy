@@ -33,7 +33,6 @@ class Spectrogram:
         min_time_table = pd.read_csv(f"{os.environ['STX_CONF']}/detector/min_time_index.csv")
 
         min_time = df.where(hstart_str < df.where(hstart_str > df[' start_date'])[' end_date']).dropna(how='all')['Mininmum time [cs]'].values[0]/10.
-        print(f"min_time {min_time}")
 
         if idx_short.size > 0:
             idx_double = np.where(self.duration[idx_short] == min_time)[0]
@@ -59,47 +58,33 @@ class Spectrogram:
         self.triggers_err = self.triggers_err[idx_long]
         
     def _get_energy_edges(self, energy, energies_used, energy_shift):
-        #nenergies = energies_used.size
-        #print(f"energy bin mask {control.data.energy_bin_mask}")
-        print(f"energies_used {energies_used}")
         energy_edges_2 = np.transpose([[energy.data.e_low[energies_used]], [energy.data.e_high[energies_used]]])
         _, _, _, energy_edges_1, _ = edge_products(energy_edges_2.squeeze())
-        print(f"energy_edges_1 {energy_edges_1.size}")
         
         energy_edges_all2 = np.transpose([[energy.data.e_low], [energy.data.e_high]])
         _, _, _, energy_edges_all1, _ = edge_products(energy_edges_2.squeeze())
-        print(f"energy_edges_all1 {energy_edges_all1.size}")
-
-        #remove infs
-        #energy_edges_all1 = energy_edges_all1[~np.isinf(energy_edges_all1)]
-        #energy_edges_1 = energy_edges_1[~np.isinf(energy_edges_1)]
-        
+       
         use_energies = np.where(energy_edges_all1 == energy_edges_1)[0]
-        print(f"use_energies {use_energies.size}")
-        #energy_edge_mask = np.array(range(33))
-        #energy_edge_mask[use_energies] = 1 #not actually used?
 
         energy_edges_used = (energy_edges_all1 + energy_shift)[use_energies]
-        print(f"size energy_edges_used {energy_edges_used.size}")
         out_mean, out_gmean, width, edges_1, edges_2 = edge_products(energy_edges_used)
         return use_energies, out_mean, out_gmean, width, edges_1, edges_2
         
     def _get_used_indices(self):
-        if self.alpha: #pixel data
+        if self.alpha and not self.background: #pixel data - but don't use on L4 background data!
             mask_use_detectors = get_use_detectors(self.det_ind)
             mask_use_pixels = get_use_pixels(self.pix_ind)
             
             pixels_used = np.where(np.logical_and(np.sum(self.pixel_mask[0],0), mask_use_pixels))[0]
             detectors_used = np.where(np.logical_and(self.detector_mask[0], mask_use_detectors))[0]
-        
-#        if self.n_times == 1: #background
-#            pm_sum = np.sum(self.data['pixel_masks'],2)
-#            pixels_used = np.where(np.logical_and(pm_sum[pm_sum > 0], mask_use_detectors == 1))[0] #no longer correct? #where(total(data_str.pixel_masks,2) gt 0 and mask_use_pixels eq 1)
-#            detectors_used = np.where(np.logical_and(self.data['detector_masks'] == 1, mask_use_detectors == 1))
-#
+
         else: #L4
-            pixels_used = np.where(self.pixel_mask[0,:] == 1)[0]
-            detectors_used = np.where(self.detector_mask[0,:] == 1)[0]
+            try:
+                pixels_used = np.where(self.pixel_mask[0,:] == 1)[0]
+                detectors_used = np.where(self.detector_mask[0,:] == 1)[0]
+            except IndexError: #pixel mask is 1-D array probably passed from data spectrogram to background one
+                pixels_used = np.where(self.pixel_mask == 1)[0]
+                detectors_used = np.where(self.detector_mask == 1)[0]
         return pixels_used, detectors_used
         
     def _get_eff_ewidth(self, pixels_used, detectors_used):
@@ -108,12 +93,11 @@ class Spectrogram:
         self.ekev_actual = ekev_actual #for testing
         
         ave_edge = np.mean(np.mean(np.swapaxes(ekev_actual, 0,2)[energy_edges_used][:,pixels_used][:,:,detectors_used],axis=1),axis=1)
-    #   ave_edge  = mean(reform(ekev_actual[energy_edges_used-1, pixels_used, detectors_used, 0 ], n_energy_edges, n_pixels, n_detectors), dim = 2)
         _, _, ewidth, _, _ = edge_products(ave_edge)
         true_ewidth = self.e_axis.width[~np.isinf(self.e_axis.width)]
         
         eff_ewidth =  true_ewidth/ewidth
-        self.eff_ewidth = eff_ewidth #for testing
+        self.eff_ewidth = eff_ewidth
         
     def _from_fits(self, energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
         """Read spectrogram FITS file. Same function as stx_read_spectrogram_fits_file and stx_read_pixel_data_fits_file
@@ -218,16 +202,6 @@ class Spectrogram:
             full_counts_err = np.zeros((self.n_time, 32))
             full_counts[:,energies_used] = self.counts_err
             self.counts_err = full_counts_err
-        
-#        spec_data = {'time': time_bin_center,
-#          'timedel': duration,
-#          'triggers': triggers,
-#          'triggers_err': triggers_err,
-#          'counts': counts,
-#          'counts_err': counts_err,
-#          'control_index': control_index,
-#          'rcr': rcr,
-#          'header': data_header}
           
         if 'pixel_masks' in control.data.names:
             self.pixel_mask = control.data.pixel_masks
@@ -261,13 +235,10 @@ class Spectrogram:
         if (control.data.energy_bin_mask[0][0] or control.data.energy_bin_mask[0][-1]) and use_discriminators:
             control.data.energy_bin_mask[0][0] = 0
             control.data.energy_bin_mask[0][-1] = 0
-            print("before use discriminators")
-            print_arr_stats(self.counts)
             self.counts[...,0] = 0. #originally [0,:]
             self.counts[...,-1] = 0.
             self.counts_err[...,0] = 0.
             self.counts_err[...,-1] = 0.
-            print_arr_stats(self.counts)
             
         energies_used = np.where(control.data.energy_bin_mask == 1)[1]
         use_energies, out_mean, out_gmean, width, edges_1, edges_2 = self._get_energy_edges(energy, energies_used, energy_shift)
@@ -291,8 +262,8 @@ class Spectrogram:
         self.distance = distance
         self.hstart_str = hstart_str
         
-    def initialize_spectrogram(self, elut_filename = None, n_energies = None):
-        """All the stuff that happens after stx_read_..._fits_file and before stx_convert_science_data2ospex. needs a better name"""
+    def apply_elut(self, elut_filename = None, n_energies = None):
+        """All the stuff that happens after stx_read_..._fits_file and before stx_convert_science_data2ospex. """
         self.data_level = [int(c) for c in self.primary_header['LEVEL'].strip() if c in ['1','4']][0] # for now
             
         # Find corresponding ELUT
@@ -348,24 +319,13 @@ class Spectrogram:
             counts_err = self.counts_err#[...,energy_bins]
                             
         if self.alpha: #L1 and background, sum over pixels
-            print('counts_spec L1')
-            print_arr_stats(counts_spec)
-            print(f"detectors used: {detectors_used}\npixels_used: {pixels_used}")
-
             counts_spec = np.sum(counts_spec[:,detectors_used][:,:,pixels_used], axis = 2)
             counts_err = np.sqrt(np.sum(counts_err[:,detectors_used][:,:,pixels_used]**2, axis = 2))
-            print('counts_spec and err after selection')
-            print_arr_stats(counts_spec)
-            print_arr_stats(counts_err)
 
         #insert the information from the telemetry file into the expected stx_fsw_sd_spectrogram structure
         self.type = "stx_spectrogram"
         self.counts = counts_spec
 
-#        if len(self.data['triggers'].shape) == 1:
-#            self.trigger = self.data['triggers']#.reshape((1,len(self.data['triggers'])))
-#            self.trigger_err = self.data['triggers_err']#.reshape((1,len(self.data['triggers_err'])))
-        print('original trigger shape',self.data['triggers'].shape)
         if not self.background:
             self.trigger = self.data['triggers'].squeeze().T  #is squeeze strictly necessary?
             self.trigger_err = self.data['triggers_err'].squeeze().T
@@ -375,8 +335,7 @@ class Spectrogram:
         if self.trigger.ndim == 1: #still want the final dim to be 1
             self.trigger = np.expand_dims(self.trigger,-1)
             self.trigger_err = np.expand_dims(self.trigger_err,-1)
-            
-        print('trigger shape',self.trigger.shape)
+         
         self.pixel_mask = pixel_mask_used
         self.detector_mask = detector_mask_used
         self.rcr = self.data['rcr']
@@ -391,26 +350,6 @@ class Spectrogram:
             
         if self.background:
             self.n_energies = 32
-#            energy_bin_mask = self.control_data.energy_bin_mask
-#            energy_bins = np.where(energy_bin_mask[0] == 1)[0]
-#            self.counts = self.counts[:,energy_bins]
-#            self.error = self.error[:,energy_bins]
-#            #dim1 = self.counts.shape[1]
-#
-#            pixels_used = np.where(self.pixel_mask == 1)[0]
-#            detectors_used = np.where(self.detector_mask== 1)[0]
-#            n_detectors = self.detector_mask.sum()
-#
-#            #corrected_counts = self.counts[:,detectors_used,:]
-#            #corrected_error = self.error[:,detectors_used,:]
-#
-#            print('corrected counts shape',corrected_counts.shape)
-#            self.counts = corrected_counts
-#            print('counts shape',self.counts.shape)
-#            self.error = corrected_error
-#
-#        else:
-#            dim1 = 1
         
         self.counts_before_livetime = self.counts.copy()
         corrected_counts, corrected_error, livetime_frac = spectrogram_livetime(self, level = self.data_level) #4?
@@ -424,20 +363,32 @@ class Spectrogram:
             livetime_frac = np.moveaxis(livetime_frac,1,0)
             corrected_counts = np.moveaxis(corrected_counts,1,0)
             corrected_error = np.moveaxis(corrected_error,1,0)
+            if not self.background: #sum over detectors
+                corrected_counts = np.sum(corrected_counts, 1).T
+                #self.counts_before_livetime = np.sum(self.counts_before_livetime,0).T
+                corrected_error = np.sqrt(np.sum(corrected_error**2, 1)).T
 
-        
-        print('corrected_counts')
-        print_arr_stats(corrected_counts)
-        print('corrected_error')
-        print_arr_stats(corrected_error)
+
         self.counts = corrected_counts
         self.error = corrected_error
         self.livetime_fraction = livetime_frac
-        #self.trigger = np.transpose(self.trigger)
-        #print("self.counts")
-        #print_arr_stats(self.counts)
-        #print("self.error")
-        #print_arr_stats(self.error)
+        
+    def _get_eff_livetime_fraction(self, expanded = True):
+        if self.data_level == 4:
+            eff_livetime_fraction = np.sum(self.counts_before_livetime,axis=1)
+        else:
+            eff_livetime_fraction = np.sum(np.sum(self.counts_before_livetime,axis=0),axis=0) #sum over detector and energy
+        
+        eff_livetime_fraction = eff_livetime_fraction/np.sum(self.counts,axis=1)
+        eff_livetime_fraction[np.isnan(eff_livetime_fraction)] = 1 #does f_div only do this for denominator values though? check
+
+        if not expanded:
+            return eff_livetime_fraction
+        else:
+            eff_livetime_fraction_expanded = np.tile(eff_livetime_fraction,self.n_energies).reshape((self.n_energies,self.n_times)) #unchanged for now
+
+            return eff_livetime_fraction_expanded
+
         
     def select_energy_channels(self, elow):
         """Trim converted data to match the channels in an existing srm file, since unable to generate srm files via Python at the moment """
@@ -493,7 +444,6 @@ class Spectrogram:
         primary_HDU = fits.PrimaryHDU(header = primary_header)
         rate_HDU = fits.BinTableHDU(header = rate_header, data = rate_table)
         energy_HDU = fits.BinTableHDU(header = energy_header, data = energy_table)
-        print(energy_HDU.header)
         hdul = fits.HDUList([primary_HDU, rate_HDU, energy_HDU]) #, att_header, att_table])
         hdul.writeto(fitsfilename)
         

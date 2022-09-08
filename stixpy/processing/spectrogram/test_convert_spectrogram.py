@@ -59,8 +59,8 @@ def test_from_fits(fitsfile, background = False, pixel=False, atol = 1e-4,energy
     spec = Spectrogram(fitsfile, background = background)
     
     ## same in IDL
-    idl = pidly.IDL('/Users/wheatley/Documents/Solar/sswidl_py.sh')
-    idl("add_path, '/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/' + get_delim() +'stix', /expand")
+    idl = pidly.IDL(os.environ['PIDLY_IDL'])
+    idl("add_path, getenv('SSW_STIX'), /expand")
     idl(".compile mrdfits")
     idl("spec", fitsfile)
     idl("energy_shift", energy_shift)
@@ -139,29 +139,25 @@ def test_from_fits(fitsfile, background = False, pixel=False, atol = 1e-4,energy
 
     print("test passed successfully")
     
-def test_l4_initialization(**kwargs):
+def test_l4_apply_elut(**kwargs):
     l4_test, _ = get_l4_testfiles()
-    test_initialization(l4_test, **kwargs)
+    test_apply_elut(l4_test, **kwargs)
     
-def test_l1_initialization(**kwargs):
+def test_l1_apply_elut(**kwargs):
     l1_test, _ = get_l1_testfiles()
     kwargs['pixel'] = True
-    test_initialization(l1_test, **kwargs)
-    
-#def test_l1a_from_fits(atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
-#    l4_test, _ = get_l4_testfiles(**kwargs)
-#    test_from_fits(l4_test)
-    
-def test_l1bg_initialization(**kwargs):
+    test_apply_elut(l1_test, **kwargs)
+
+def test_l1bg_apply_elut(**kwargs):
     _, l1bg_test = get_l1_testfiles()
     kwargs['pixel'] = True
     kwargs['background'] = True
     kwargs['use_discriminators'] = False
-    test_initialization(l1bg_test, **kwargs)
+    test_apply_elut(l1bg_test, **kwargs)
     
-def test_initialization(fitsfile, background = False, pixel=False, atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
+def test_apply_elut(fitsfile, background = False, pixel=False, atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
     spec = Spectrogram(fitsfile, background = background)
-    spec.initialize_spectrogram()
+    spec.apply_elut()
 
     ## same in IDL
     #os.chdir('/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/')
@@ -267,7 +263,7 @@ def test_l1bg_correction(**kwargs):
     
 def test_correction(fitsfile, background = False, pixel=False, atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
     spec = Spectrogram(fitsfile, background = background)
-    spec.initialize_spectrogram()
+    spec.apply_elut()
     if not spec.alpha:
         spec.data_level = 4
     spec.correct_counts()
@@ -320,7 +316,7 @@ def test_correction(fitsfile, background = False, pixel=False, atol = 1e-4,energ
         #idl("print, 'trigger after',spectrogram_new.trigger.dim")
         #idl("spectrogram.trigger_err = transpose(spectrogram.trigger_err)")
         #idl("counts_spec  = spectrogram.counts")
-        idl("livetime_frac =  stx_spectrogram_livetime( spectrogram, corrected_counts = corrected_counts, corrected_error = corrected_error, level = 1 )")
+        idl("livetime_frac =  stx_spectrogram_livetime( spectrogram, corrected_counts = corrected_counts, corrected_error = corrected_error, level = 1 )") #should sum counts and error over detectors
 
     else: #background stuff is subset of stx_convert_science_data2ospex
         idl("stx_read_pixel_data_fits_file, fits_path_data, 0., primary_header = primary_header, data_str = data_str, data_header = data_header, control_str = control_str, control_header= control_header, energy_str = energy_str, energy_header = energy_header, t_axis = t_axis, energy_shift = energy_shift,  e_axis = e_axis , use_discriminators = use_discriminators, alpha = alpha")
@@ -417,6 +413,8 @@ def test_conversion(fitsfile, bgfile, atol = 1e-4,energy_shift = 0, pixel=False,
     idl("error = out_spec.error")
     idl("corrected_counts = out_spec.corrected_counts")
     idl("corrected_error = out_spec.corrected_error")
+    idl("counts_spec = out_spec.counts_spec")
+    idl("eff_lt = out_spec.eff_livetime_fraction_expanded")
     idl("counts_bk = background_data.counts")
     idl("error_bk = background_data.error")
     idl("counts_in_bk = background_data.counts_in_bk")
@@ -427,24 +425,32 @@ def test_conversion(fitsfile, bgfile, atol = 1e-4,energy_shift = 0, pixel=False,
     idl_error = idl.error
     idl_corrected_counts = idl.corrected_counts
     idl_corrected_error = idl.corrected_error
+    idl_counts_spec = idl.counts_spec
+    idl_eff_lt = idl.eff_lt
     idl_counts_bk = idl.counts_bk
     idl_error_bk = idl.error_bk
+    idl_counts_in_bk = idl.counts_in_bk
+    idl_spec_in_bk = idl.spec_in_bk
+    idl_lt_counts = idl.livetime_corrected_counts_bk
+    idl_lt_err = idl.livetime_corrected_err_bk
 
     assert_allclose(rdict['corrected_counts'], idl_corrected_counts, atol=atol)
     assert_allclose(rdict['corrected_error'], idl_corrected_error, atol=atol)
     assert_allclose(rdict['corrected_counts_bk'], idl_counts_bk, atol=atol)
     assert_allclose(rdict['error_bk'], idl_error_bk, atol=atol)
+    #assert_allclose(rdict['spec'].counts_before_livetime, idl_counts_spec, atol=atol)
+    assert_allclose(rdict['eff_lt'], idl_eff_lt.T, atol=atol)
     assert_allclose(rdict['spec_in_corr'], idl_counts, atol=atol)
     assert_allclose(rdict['total_error'], idl_error, atol=atol)
     
     ## compare energy axis
-    idl("energy_mean = out_spec.e_axis.mean")
-    idl("energy_gmean = out_spec.e_axis.gmean")
-    idl("energy_low = out_spec.e_axis.low")
-    idl("energy_high = out_spec.e_axis.high")
-    idl("energy_width = out_spec.e_axis.width")
-    idl("energy_low_fsw_idx = out_spec.e_axis.low_fsw_idx")
-    idl("energy_high_fsw_idx = out_spec.e_axis.high_fsw_idx")
+    idl("energy_mean = out_spec.energy_axis.mean")
+    idl("energy_gmean = out_spec.energy_axis.gmean")
+    idl("energy_low = out_spec.energy_axis.low")
+    idl("energy_high = out_spec.energy_axis.high")
+    idl("energy_width = out_spec.energy_axis.width")
+    idl("energy_low_fsw_idx = out_spec.energy_axis.low_fsw_idx")
+    idl("energy_high_fsw_idx = out_spec.energy_axis.high_fsw_idx")
     idl_energy_mean = idl.energy_mean
     idl_energy_gmean = idl.energy_gmean
     idl_energy_low = idl.energy_low
@@ -463,3 +469,17 @@ def test_conversion(fitsfile, bgfile, atol = 1e-4,energy_shift = 0, pixel=False,
 
     idl.close()
     print("test passed successfully")
+
+def test_ogip_time_calcs():
+    l4_test, _ = get_l4_testfiles()
+    spec_l4 = Spectrogram(l4_test)
+    spec_l4.apply_elut()
+    timedict_l4 = ogip_time_calcs(spec_l4)
+    
+    print("L4 test passed successfully")
+    
+    l1_test, _ = get_l1_testfiles()
+    spec_l1 = Spectrogram(l1_test)
+    spec_l1.apply_elut()
+    timedict_l1 = ogip_time_calcs(spec_l1)
+    print("L1 test passed successfully")
