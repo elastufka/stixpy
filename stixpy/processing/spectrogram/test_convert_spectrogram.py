@@ -152,7 +152,7 @@ def test_l1_initialization(**kwargs):
 #    l4_test, _ = get_l4_testfiles(**kwargs)
 #    test_from_fits(l4_test)
     
-def test_l1bg_initializatino(**kwargs):
+def test_l1bg_initialization(**kwargs):
     _, l1bg_test = get_l1_testfiles()
     kwargs['pixel'] = True
     kwargs['background'] = True
@@ -188,98 +188,278 @@ def test_initialization(fitsfile, background = False, pixel=False, atol = 1e-4,e
         idl("keep_short_bins",0)
     #idl("bkspec", bg_file)
     if not pixel:
-        idl("stx_convert_spectrogram_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, apply_time_shift = apply_time_shift, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram")
-    else:
+        idl("stx_convert_spectrogram_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, apply_time_shift = apply_time_shift, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram,eff_ewidth = eff_ewidth")
+    elif not background:
         idl("stx_convert_pixel_data_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram, eff_ewidth = eff_ewidth")
+    else: #background stuff is subset of stx_convert_science_data2ospex
+        idl("stx_read_pixel_data_fits_file, fits_path_data, 0., primary_header = primary_header, data_str = data_str, data_header = data_header, control_str = control_str, control_header= control_header, energy_str = energy_str, energy_header = energy_header, t_axis = t_axis, energy_shift = energy_shift,  e_axis = e_axis , use_discriminators = use_discriminators, alpha = alpha")
+        idl("bk_data_level = 1")
+        idl("counts_in_bk = data_str.counts")
+        idl("dim_counts_bk = counts_in_bk.dim")
+        idl("ntimes_bk = n_elements(dim_counts_bk) gt 3 ? dim_counts_bk[3] : 1")
+        #idl("pixels_used = [0, 1, 2, 3, 4, 5, 6, 7]")
+        idl("pixels_used = [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11]")
+        idl("detectors_used = [ 0,  1,  2,  3,  4,  5,  6,  7, 13, 14, 15, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]")
+        idl("n_pixels_bk = n_elements(pixels_used)")
+        idl("n_detectors_bk = n_elements(detectors_used)")
+        idl("spec_in_bk = total(reform(data_str.counts[*,pixels_used,detectors_used,*], dim_counts_bk[0], n_pixels_bk, n_detectors_bk, ntimes_bk  ),2)")
+        idl("counts = reform(spec_in_bk, dim_counts_bk[0],n_detectors_bk, ntimes_bk)")
+        idl("error_in_bk = sqrt(total(reform(data_str.counts_err[*,pixels_used,detectors_used,*], dim_counts_bk[0], n_pixels_bk, n_detectors_bk, ntimes_bk  )^2.,2))")
+        idl("counts_err = reform(error_in_bk, dim_counts_bk[0],n_detectors_bk, ntimes_bk)")
+        idl("trigger = transpose(data_str.triggers)")
+        idl("trigger_err = transpose(data_str.triggers_err)")
+
+    if not background:
+        idl_eff_ewidth = idl.eff_ewidth
+        assert_allclose(spec.eff_ewidth, idl_eff_ewidth, atol=atol)
 
     ## compare counts, triggers, and errors
-    idl("counts = spectrogram.counts")
-    idl("counts_err =  spectrogram.error")
-    idl("trigger = spectrogram.trigger")
-    idl("trigger_err = spectrogram.trigger_err")
+    if not background:
+        idl("counts = spectrogram.counts")
+        idl("counts_err =  spectrogram.error")
+        idl("trigger = spectrogram.trigger")
+        idl("trigger_err = spectrogram.trigger_err")
     idl_counts = idl.counts
     idl_counts_err = idl.counts_err
     idl_trigger = idl.trigger
     idl_trigger_err = idl.trigger_err
 
-#    if background:
-#        assert_allclose(spec.counts[0], idl_counts, atol=atol)
-#        assert_allclose(spec.counts_err[0], idl_counts_err, atol=atol)
-#        assert_allclose(spec.trigger[0], idl_trigger, atol=atol)
-#        assert_allclose(spec.trigger_err[0], idl_trigger_err, atol=atol)
-#    else:
-#        assert_allclose(spec.counts.T, idl_counts, atol=atol)
-#        #assert_allclose(spec.counts_err, idl_counts_err, atol=atol)
-#        assert_allclose(spec.trigger.T, idl_trigger, atol=atol)
-#        assert_allclose(spec.trigger_err.T, idl_trigger_err, atol=atol)
-        
-    if pixel:
-        idl_eff_ewidth = idl.eff_ewidth
-        assert_allclose(spec.eff_ewidth, idl_eff_ewidth, atol=atol)
+    if background:
+        assert_allclose(spec.counts[0], idl_counts, atol=atol)
+        assert_allclose(spec.error[0], idl_counts_err, atol=atol)
+        assert_allclose(spec.trigger, idl_trigger, atol=atol)
+        assert_allclose(spec.trigger_err, idl_trigger_err, atol=atol)
+    else:
+        assert_allclose(spec.counts, idl_counts, atol=atol)
+        assert_allclose(spec.error, idl_counts_err, atol=atol)
+        assert_allclose(spec.trigger, idl_trigger, atol=atol)
+        assert_allclose(spec.trigger_err, idl_trigger_err, atol=atol)
+
+    idl.close()
+    print("test passed successfully")
+    
+def test_l4_correction(**kwargs):
+    l4_test, _ = get_l4_testfiles()
+    test_correction(l4_test, **kwargs)
+    
+def test_l1_correction(**kwargs):
+    l1_test, _ = get_l1_testfiles()
+    kwargs['pixel'] = True
+    test_correction(l1_test, **kwargs)
+    
+#def test_l1a_from_fits(atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
+#    l4_test, _ = get_l4_testfiles(**kwargs)
+#    test_from_fits(l4_test)
+    
+def test_l4bg_correction(**kwargs):
+    _, l4bg_test = get_l4_testfiles()
+    kwargs['pixel'] = True
+    kwargs['background'] = True
+    kwargs['use_discriminators'] = False
+    test_correction(l4bg_test, **kwargs)
+
+def test_l1bg_correction(**kwargs):
+    _, l1bg_test = get_l1_testfiles()
+    kwargs['pixel'] = True
+    kwargs['background'] = True
+    kwargs['use_discriminators'] = False
+    test_correction(l1bg_test, **kwargs)
+    
+def test_correction(fitsfile, background = False, pixel=False, atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
+    spec = Spectrogram(fitsfile, background = background)
+    spec.initialize_spectrogram()
+    if not spec.alpha:
+        spec.data_level = 4
+    spec.correct_counts()
+
+    ## same in IDL
+    #os.chdir('/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/')
+    idl = pidly.IDL('/Users/wheatley/Documents/Solar/sswidl_py.sh')
+    idl("add_path, '/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/' + get_delim() +'stix', /expand")
+    idl("setenv, 'SSW_STIX=/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/stix'")
+    idl(".compile mrdfits")
+    #idl("cd, '/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW'")
+    idl("fits_path_data", fitsfile)
+    idl("energy_shift", energy_shift)
+    #if spec.alpha:
+    #    idl("alpha", 1)
+    if not use_discriminators:
+        idl("use_discriminators", 0) #defalut is 1
+    else:
+        idl("use_discriminators", 1)
+    if replace_doubles:
+        idl("replace_doubles", 1)
+    else:
+        idl("replace_doubles",0)
+    if keep_short_bins:
+        idl("keep_short_bins", 1)
+    else:
+        idl("keep_short_bins",0)
+    #idl("bkspec", bg_file)
+    if not pixel:
+        idl("stx_convert_spectrogram_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, apply_time_shift = apply_time_shift, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram")
+        idl("data_dims = spectrogram.counts.dim")
+        idl("n_energies = data_dims[0]")
+        idl("n_detectors = 1")
+        idl("n_pixels = 1")
+        idl("n_times = data_dims[1]")
+        #idl("counts_spec  = spectrogram.counts")
+        idl("livetime_frac =  stx_spectrogram_livetime( spectrogram, corrected_counts = corrected_counts, corrected_error = corrected_error, level = 4 )")
+        #idl("corrected_counts = total(reform(corrected_counts, [n_energies, n_detectors, n_times ]),2)")
+        #idl("counts_spec = total(reform(counts_spec,[n_energies, n_detectors, n_times ]),2)")
+        #idl("corrected_error = sqrt(total(reform(corrected_error, [n_energies, n_detectors, n_times ])^2.,2))")
+    elif not background:
+        idl("stx_convert_pixel_data_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram, eff_ewidth = eff_ewidth")
+        idl("data_dims = spectrogram.counts.dim")
+        idl("n_energies = data_dims[0]")
+        idl("n_detectors = data_dims[1]")
+        idl("n_pixels = 1")
+        idl("n_times = data_dims[2]")
+        #idl("print, 'trigger before',spectrogram.trigger.dim")
+        #idl("spectrogram_new = {counts:spectrogram.counts, trigger:transpose(spectrogram.trigger),trigger_err:transpose(spectrogram.trigger_err),time_axis:spectrogram.time_axis,energy_axis:spectrogram.energy_axis,error:spectrogram.error, detector_mask:spectrogram.detector_mask,pixel_mask:spectrogram.pixel_mask}")
+        #idl("print, 'trigger after',spectrogram_new.trigger.dim")
+        #idl("spectrogram.trigger_err = transpose(spectrogram.trigger_err)")
+        #idl("counts_spec  = spectrogram.counts")
+        idl("livetime_frac =  stx_spectrogram_livetime( spectrogram, corrected_counts = corrected_counts, corrected_error = corrected_error, level = 1 )")
+
+    else: #background stuff is subset of stx_convert_science_data2ospex
+        idl("stx_read_pixel_data_fits_file, fits_path_data, 0., primary_header = primary_header, data_str = data_str, data_header = data_header, control_str = control_str, control_header= control_header, energy_str = energy_str, energy_header = energy_header, t_axis = t_axis, energy_shift = energy_shift,  e_axis = e_axis , use_discriminators = use_discriminators, alpha = alpha")
+        idl("bk_data_level = 1")
+        idl("counts_in_bk = data_str.counts")
+        idl("dim_counts_bk = counts_in_bk.dim")
+        idl("ntimes_bk = n_elements(dim_counts_bk) gt 3 ? dim_counts_bk[3] : 1")
+        #idl("pixels_used = [0, 1, 2, 3, 4, 5, 6, 7]")
+        idl("pixels_used = [ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11]")
+        idl("detectors_used = [ 0,  1,  2,  3,  4,  5,  6,  7, 13, 14, 15, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]")
+        idl("n_pixels_bk = n_elements(pixels_used)")
+        idl("n_detectors_bk = n_elements(detectors_used)")
+        idl("pixel_mask = [1,1,1,1,1,1,1,1,1,1,1,1]")
+        idl("detector_mask = [1,1,1,1,1,1,1,1,0,0,0,0,0,1,1,1,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1]")
+        idl("spec_in_bk = total(reform(data_str.counts[*,pixels_used,detectors_used,*], dim_counts_bk[0], n_pixels_bk, n_detectors_bk, ntimes_bk  ),2)")
+        idl("counts = reform(spec_in_bk, dim_counts_bk[0],n_detectors_bk, ntimes_bk)")
+        idl("error_in_bk = sqrt(total(reform(data_str.counts_err[*,pixels_used,detectors_used,*], dim_counts_bk[0], n_pixels_bk, n_detectors_bk, ntimes_bk  )^2.,2))")
+        idl("counts_err = reform(error_in_bk, dim_counts_bk[0],n_detectors_bk, ntimes_bk)")
+        idl("trigger = transpose(data_str.triggers)")
+        idl("trigger_err = transpose(data_str.triggers_err)")
+        idl("spectrogram_bk = {counts:spec_in_bk, trigger:trigger,trigger_err:trigger_err,time_axis:t_axis,energy_axis:e_axis,error:error_in_bk,pixel_mask:pixel_mask,detector_mask:detector_mask}")
+        idl("livetime_frac =  stx_spectrogram_livetime(spectrogram_bk, corrected_counts = corrected_counts,  corrected_error = corrected_error, level = 1)")
+
+    ## compare counts, triggers, and errors
+
+    idl("counts = corrected_counts")
+    idl("counts_err =  corrected_error")
+    idl("livetime_frac = livetime_frac")
+    idl_counts = idl.counts
+    idl_counts_err = idl.counts_err
+    idl_livetime_frac = idl.livetime_frac
+
+    if background:
+        assert_allclose(spec.livetime_fraction[...,0], idl_livetime_frac.T, atol=atol)
+        assert_allclose(spec.counts[...,0], idl_counts.T, atol=atol)
+        assert_allclose(spec.error[...,0], idl_counts_err.T, atol=atol)
+    else:
+        assert_allclose(spec.livetime_fraction, idl_livetime_frac.T, atol=atol)
+        assert_allclose(spec.counts, idl_counts.T, atol=atol)
+        assert_allclose(spec.error, idl_counts_err.T, atol=atol)
 
     idl.close()
     print("test passed successfully")
 
-def test_convert_l4(atol = 1e-4):
+def test_l4_conversion(**kwargs):
     l4_test, bg_file = get_l4_testfiles()
-    rdict = convert_spectrogram(l4_test, bg_file)
+    test_conversion(l4_test, bg_file, **kwargs)
+    
+def test_l1_conversion(**kwargs):
+    l1_test, bg_file = get_l1_testfiles()
+    kwargs['pixel'] = True
+    test_conversion(l1_test, bg_file, **kwargs)
+    
+#def test_l1a_from_fits(atol = 1e-4,energy_shift = 0, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
+#    l4_test, _ = get_l4_testfiles(**kwargs)
+#    test_from_fits(l4_test)
+    
+def test_conversion(fitsfile, bgfile, atol = 1e-4,energy_shift = 0, pixel=False, use_discriminators = True, replace_doubles = False, keep_short_bins = True, shift_duration = None, alpha = None, time_bin_filename = None):
+    rdict = convert_spectrogram(fitsfile, bgfile)
     spec = rdict['spec']
     spec_bk = rdict['spec_bk']
-    
-#    corrected_counts_bk          30       16213
-#    Mean:        30.542080
-#    Min:       0.61343993
-#    Max:        2367.1158
-#    Std:        97.374006
-    print('corrected_counts_bk',np.allclose(mean_minmax(rdict['corrected_counts_bk']),[30,16213,30.542080,0.61343993,2367.1158],atol=atol))
-#    spec_In_bk          30       16213
-#    Mean:        30.512577
-#    Min:       0.61284747
-#    Max:        2364.8362
-#    Std:        97.279997
-    print('spec_in_bk',np.allclose(mean_minmax(rdict['spec_in_bk']),[30,16213,30.512577,0.61284747,2364.8362],atol=atol))
-#    error_bk          30       16213
-#    Mean:        5.3090429
-#    Min:       0.55412221
-#    Max:        223.33762
-#    Std:        10.486871
-    print('error_bk',np.allclose(mean_minmax(rdict['error_bk']),[30,16213,5.3090429,0.55412221,223.33762],atol=atol))
-#    corrected_counts          30       16213
-#           215.27700       366.47204       496.66668       303.65831       150.83012       49.267421
-#           32.883653       26.032736       20.109790       7.9740476       10.027424
-#    Mean:        387.82074
-#    Min:        0.0000000
-#    Max:        218026.97
-#    Std:        4105.4163
-#
-    print('corrected_counts',np.allclose(mean_minmax(rdict['corrected_counts']),[30,16213,387.82074,0.0000000,218026.97],atol=atol))
+    ## same in IDL
+    #os.chdir('/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/')
+    idl = pidly.IDL('/Users/wheatley/Documents/Solar/sswidl_py.sh')
+    idl("add_path, '/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/' + get_delim() +'stix', /expand")
+    idl("setenv, 'SSW_STIX=/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW/stix'")
+    idl(".compile mrdfits")
+    #idl("cd, '/Users/wheatley/Documents/Solar/STIX/code/STIX-GSW'")
+    idl("fits_path_data", fitsfile)
+    idl("fits_path_bk", bgfile)
+    idl("energy_shift", energy_shift)
+    #if spec.alpha:
+    #    idl("alpha", 1)
+    if not use_discriminators:
+        idl("use_discriminators", 0) #defalut is 1
+    else:
+        idl("use_discriminators", 1)
+    if replace_doubles:
+        idl("replace_doubles", 1)
+    else:
+        idl("replace_doubles",0)
+    if keep_short_bins:
+        idl("keep_short_bins", 1)
+    else:
+        idl("keep_short_bins",0)
+    #idl("bkspec", bg_file)
+    if not pixel:
+        idl("stx_convert_spectrogram_full_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, apply_time_shift = apply_time_shift, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram, out_spec = out_spec")
+    else:
+        idl("stx_convert_pixel_data_full_test, fits_path_data=fits_path_data, fits_path_bk = fits_path_bk, time_shift=0., energy_shift = energy_shift, distance = distance, flare_location= flare_location, shift_duration = shift_duration, no_attenuation=no_attenuation, sys_uncert = sys_uncert, generate_fits = generate_fits, specfile = specfile, srmfile = srmfile, xspec = xspec, background_data = background_data, plot = plot, ospex_obj = ospex_obj, spectrogram = spectrogram, eff_ewidth = eff_ewidthj, out_spec = out_spec")
 
-#    corrected_error          30       16213
-#    Mean:        103.20699
-#    Min:        0.0000000
-#    Max:        39223.142
-#    Std:        1139.2524
-    print('corrected_error',np.allclose(mean_minmax(rdict['corrected_error']),[30,16213,103.20699,0.0000000,39223.142],atol=atol))
-    
-    #IDL
-#    spec_in_corr
-#    Mean:        243.87446
-#    Min:       -788.57357
-#    Max:        77993.291
-#    Std:        2147.5142
+    ## compare counts, errors
+    idl("counts = out_spec.counts")
+    idl("error = out_spec.error")
+    idl("corrected_counts = out_spec.corrected_counts")
+    idl("corrected_error = out_spec.corrected_error")
+    idl("counts_bk = background_data.counts")
+    idl("error_bk = background_data.error")
+    idl("counts_in_bk = background_data.counts_in_bk")
+    idl("spec_in_bk = background_data.spec_in_bk")
+    idl("livetime_corrected_counts_bk = background_data.livetime_corrected_counts_bk")
+    idl("livetime_corrected_err_bk = background_data.livetime_corrected_err_bk")
+    idl_counts = idl.counts
+    idl_error = idl.error
+    idl_corrected_counts = idl.corrected_counts
+    idl_corrected_error = idl.corrected_error
+    idl_counts_bk = idl.counts_bk
+    idl_error_bk = idl.error_bk
 
-
-    print('spec_in_corr',np.allclose(mean_minmax(rdict['spec_in_corr']),[30,16213,243.87446,-788.57357,77993.291],atol=atol))
-    print(mean_minmax(rdict['spec_in_corr']))
-#    spec_in_uncorr
-#    Mean:        243.68858
-#    Min:       -788.58983
-#    Max:        77991.548
-#    Std:        2147.4087
-    print('spec_in_uncorr',np.allclose(mean_minmax(rdict['spec_in_uncorr']),[30,16213,243.68858,-788.58983,77991.548],atol=atol))
-#    total_error
-#    Mean:        76.798554
-#    Min:       0.43368515
-#    Max:        18987.020
-    print('total_error',np.allclose(mean_minmax(rdict['total_error']),[30,16213,76.798554, 0.43368515,18987.020],atol=atol))
+    assert_allclose(rdict['corrected_counts'], idl_corrected_counts, atol=atol)
+    assert_allclose(rdict['corrected_error'], idl_corrected_error, atol=atol)
+    assert_allclose(rdict['corrected_counts_bk'], idl_counts_bk, atol=atol)
+    assert_allclose(rdict['error_bk'], idl_error_bk, atol=atol)
+    assert_allclose(rdict['spec_in_corr'], idl_counts, atol=atol)
+    assert_allclose(rdict['total_error'], idl_error, atol=atol)
     
+    ## compare energy axis
+    idl("energy_mean = out_spec.e_axis.mean")
+    idl("energy_gmean = out_spec.e_axis.gmean")
+    idl("energy_low = out_spec.e_axis.low")
+    idl("energy_high = out_spec.e_axis.high")
+    idl("energy_width = out_spec.e_axis.width")
+    idl("energy_low_fsw_idx = out_spec.e_axis.low_fsw_idx")
+    idl("energy_high_fsw_idx = out_spec.e_axis.high_fsw_idx")
+    idl_energy_mean = idl.energy_mean
+    idl_energy_gmean = idl.energy_gmean
+    idl_energy_low = idl.energy_low
+    idl_energy_high = idl.energy_high
+    idl_energy_width = idl.energy_width
+    idl_energy_low_fsw_idx = idl.energy_low_fsw_idx
+    idl_energy_high_fsw_idx = idl.energy_high_fsw_idx
+    idl.close()
+    assert_allclose(spec.e_axis.energy_mean, idl_energy_mean, atol=atol)
+    assert_allclose(spec.e_axis.gmean, idl_energy_gmean, atol=atol)
+    assert_allclose(spec.e_axis.low, idl_energy_low, atol=atol)
+    assert_allclose(spec.e_axis.high, idl_energy_high, atol=atol)
+    assert_allclose(spec.e_axis.width, idl_energy_width, atol=atol)
+    assert_allclose(spec.e_axis.low_fsw_idx+1, idl_energy_low_fsw_idx, atol=atol)
+    assert_allclose(spec.e_axis.high_fsw_idx+1, idl_energy_high_fsw_idx, atol=atol)
+
+    idl.close()
+    print("test passed successfully")

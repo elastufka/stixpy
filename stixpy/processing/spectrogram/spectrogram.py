@@ -300,6 +300,9 @@ class Spectrogram:
             self.elut_filename = date2elut_file(self.hstart_str)
             
         counts_in = self.counts
+        self.counts_in = counts_in
+        counts_err_in = self.counts_err
+        self.counts_err_in = counts_err_in
         dim_counts = counts_in.shape
         self.n_times = 1
 
@@ -327,47 +330,52 @@ class Spectrogram:
             self._get_eff_ewidth(pixels_used, detectors_used)
         
             if not self.alpha: #L4
-                spec_in = counts_in.T.copy()
-                counts_spec =  spec_in[energy_bins,:] / np.repeat(self.eff_ewidth, self.n_times).reshape((self.n_energies, self.n_times))
-                print('counts_spec l4')
-                print_arr_stats(counts_spec)
-                counts_err = self.data['counts_err'][:,energy_bins] #probably wrong... need a sqrt([]**2)?
+                spec_in = counts_in.T.copy() #undo .T
+                counts_spec =  np.transpose(spec_in[energy_bins,:] / np.repeat(self.eff_ewidth, self.n_times).reshape((self.n_energies, self.n_times)))#transpose back to make life easier
+                error_in = self.data['counts_err'].T.copy()
+                counts_err = np.transpose(error_in[energy_bins,:]/ np.repeat(self.eff_ewidth, self.n_times).reshape((self.n_energies, self.n_times)))
             else: #L1
-                counts_spec = np.moveaxis(self.counts,0,3) #[n_energies, n_pixels,n_detectors,n_times]
-#                spec_in = np.sum(counts_in[:,pixels_used,:,:], 1) #sum over pixels, shape is 32, 32,n_times
-                counts_spec = counts_spec[energy_bins]/np.reshape(np.tile(self.eff_ewidth, self.n_times*32*12),(self.n_energies,12,32,self.n_times))
+                #counts_spec = np.moveaxis(self.counts,0,3) #[n_energies, n_pixels,n_detectors,n_times]
+                counts_spec = counts_in[...,energy_bins]/np.reshape(np.tile(self.eff_ewidth, self.n_times*32*12),(self.n_times,32,12,self.n_energies))
 #
-                counts_err = np.moveaxis(self.counts_err,0,3) #[32,n_pixels,n_detectors,n_times]
+                #counts_err = np.moveaxis(self.counts_err,0,3) #[32,n_pixels,n_detectors,n_times]
                 #counts_err = np.sqrt(np.sum(counts_err[:,pixels_used,:,:]**2,1))
-                counts_err = counts_err[energy_bins]/np.reshape(np.tile(self.eff_ewidth, self.n_times*32*12),(self.n_energies,12,32,self.n_times))
+                counts_err = self.counts_err[...,energy_bins]/np.reshape(np.tile(self.eff_ewidth, self.n_times*32*12),(self.n_times,32,12,self.n_energies))
         else: #still move time axis to the last position to make things easier
-            counts_spec = np.moveaxis(self.counts,0,3) #[energy_bins] #self.data['counts']
-            counts_err  = np.moveaxis(self.counts_err,0,3) #[energy_bins] #counts_err = self.data['counts_err']
+            #counts_spec = np.moveaxis(self.counts,0,3) #[energy_bins] #self.data['counts']
+            #counts_err  = np.moveaxis(self.counts_err,0,3) #[energy_bins] #counts_err = self.data['counts_err']
+            counts_spec = counts_in#[...,energy_bins]
+            counts_err = self.counts_err#[...,energy_bins]
                             
         if self.alpha: #L1 and background, sum over pixels
             print('counts_spec L1')
             print_arr_stats(counts_spec)
             print(f"detectors used: {detectors_used}\npixels_used: {pixels_used}")
 
-            counts_spec = np.sum(counts_spec[:,pixels_used][:,:,detectors_used], axis = 1)
-            counts_err = np.sqrt(np.sum(counts_err[:,pixels_used][:,:,detectors_used]**2, axis = 1))
-            print('counts_spec after selection')
+            counts_spec = np.sum(counts_spec[:,detectors_used][:,:,pixels_used], axis = 2)
+            counts_err = np.sqrt(np.sum(counts_err[:,detectors_used][:,:,pixels_used]**2, axis = 2))
+            print('counts_spec and err after selection')
             print_arr_stats(counts_spec)
+            print_arr_stats(counts_err)
 
         #insert the information from the telemetry file into the expected stx_fsw_sd_spectrogram structure
         self.type = "stx_spectrogram"
         self.counts = counts_spec
 
-        if len(self.data['triggers'].shape) == 1:
-            self.trigger = self.data['triggers'].reshape((1,len(self.data['triggers'])))
-            self.trigger_err = self.data['triggers_err'].reshape((1,len(self.data['triggers_err'])))
-
-        elif not self.background:
-            self.trigger = self.data['triggers'].squeeze().T
+#        if len(self.data['triggers'].shape) == 1:
+#            self.trigger = self.data['triggers']#.reshape((1,len(self.data['triggers'])))
+#            self.trigger_err = self.data['triggers_err']#.reshape((1,len(self.data['triggers_err'])))
+        print('original trigger shape',self.data['triggers'].shape)
+        if not self.background:
+            self.trigger = self.data['triggers'].squeeze().T  #is squeeze strictly necessary?
             self.trigger_err = self.data['triggers_err'].squeeze().T
         else:
             self.trigger = self.data['triggers'].T
             self.trigger_err = self.data['triggers_err'].T
+        if self.trigger.ndim == 1: #still want the final dim to be 1
+            self.trigger = np.expand_dims(self.trigger,-1)
+            self.trigger_err = np.expand_dims(self.trigger_err,-1)
+            
         print('trigger shape',self.trigger.shape)
         self.pixel_mask = pixel_mask_used
         self.detector_mask = detector_mask_used
@@ -377,7 +385,16 @@ class Spectrogram:
         
     def correct_counts(self):
 
-#        if self.alpha:
+        if self.alpha:
+            self.counts = np.moveaxis(self.counts,0,2)
+            self.error = np.moveaxis(self.error,0,2)
+            
+        if self.background:
+            self.n_energies = 32
+#            energy_bin_mask = self.control_data.energy_bin_mask
+#            energy_bins = np.where(energy_bin_mask[0] == 1)[0]
+#            self.counts = self.counts[:,energy_bins]
+#            self.error = self.error[:,energy_bins]
 #            #dim1 = self.counts.shape[1]
 #
 #            pixels_used = np.where(self.pixel_mask == 1)[0]
@@ -402,6 +419,12 @@ class Spectrogram:
         #    corrected_counts = np.sum(corrected_counts, axis=0) # Sum over detectors
         #    #livetime_frac = np.sum(livetime_frac, axis=1) # not technically necessary
        #     corrected_error = np.sqrt(np.sum(corrected_error**2,axis=0))#[:,0] # for now - is it possible that there are background files without ntimes = 1?
+        
+        if self.alpha: #move it back
+            livetime_frac = np.moveaxis(livetime_frac,1,0)
+            corrected_counts = np.moveaxis(corrected_counts,1,0)
+            corrected_error = np.moveaxis(corrected_error,1,0)
+
         
         print('corrected_counts')
         print_arr_stats(corrected_counts)

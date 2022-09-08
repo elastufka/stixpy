@@ -72,8 +72,8 @@ def spectrogram_livetime(spectrogram, level = 4):
             #shape0 = ndet#ntimes
             
         elif level == 4:
-            dim_counts = (nenergies, ntimes)
-            trig = np.transpose((spectrogram.trigger.T + err.T) * (np.ones(16)/16.))
+            dim_counts = (nenergies,ntimes)
+            trig = np.transpose((spectrogram.trigger + err) * (np.ones(16)/16.))
             #shape0 = nenergies
         
         if np.sum(np.sign(err))/err.size == -1:
@@ -84,20 +84,76 @@ def spectrogram_livetime(spectrogram, level = 4):
         if level == 4:
             livetime_frac = livetime_frac[0,:]
         livetime_frac = np.tile(livetime_frac,nenergies).reshape(dim_counts) #formerly tile by shape0
+        if level == 4:
+            livetime_frac = livetime_frac.T
         print('livetime_frac')
         print_arr_stats(livetime_frac)
+        #livetime_frac
+#        Shape: (30, 16213)
+#        Mean: 0.9834991069880434
+#        Min: 0.35772757294071816
+#        Max: 0.9991485993592356
+#        Std: 0.06340875453764692
         livetime_fracs.append(livetime_frac)
     
     if level not in [1,4]:
         warnings.warn('Currently supported compaction levels are 1 (pixel data) and 4 (spectrogram)')
-    corrected_counts =  spectrogram.counts/livetime_fracs[1] #livetime fraction shape is n_energies, n_detectors, n_times
-    corrected_counts_upper =  spectrogram.counts/livetime_fracs[2]
-    corrected_counts_lower =  spectrogram.counts/livetime_fracs[0]
+    spec_counts = spectrogram.counts.copy()
+    corrected_counts_lower =  spec_counts/livetime_fracs[0]
+    corrected_counts =  spec_counts/livetime_fracs[1]
+    corrected_counts_upper =  spec_counts/livetime_fracs[2]
+    print("corrected low")
+    print_arr_stats(corrected_counts_lower)
+    print("corrected high")
+    print_arr_stats(corrected_counts_upper)
     error_from_livetime = (corrected_counts_upper - corrected_counts_lower)/2.
-
-    temp_err = spectrogram.error#np.zeros_like(spectrogram.error.T) #should probably not be zeros at this point... mention to Ewan
+    print("error from livetime")
+    print_arr_stats(error_from_livetime)
+    temp_err = spectrogram.error.copy()#np.zeros_like(spectrogram.error.T) #should probably not be zeros at this point... mention to Ewan
     if temp_err.shape != livetime_fracs[1].shape:
         temp_err = spectrogram.error.T#np.zeros_like(spectrogram.error.T) for testing only!
+    print_arr_stats(temp_err)
+#    Shape: (30, 16213)
+#    Mean: 12.629071235656738
+#    Min: 0.0
+#    Max: 2381.22412109375
+#    Std: 59.45590591430664
+    
     corrected_error = np.sqrt((temp_err/livetime_fracs[1])**2. + error_from_livetime**2.)
 
     return corrected_counts, corrected_error, livetime_fracs[1]
+    
+#livetime low
+#Shape: (30, 16213)
+#Mean: 0.9999967141537821
+#Min: 0.9987837192545421
+#Max: 1.0
+#Std: 4.959035033820174e-05
+#
+#livetime high
+#Shape: (30, 16213)
+#Mean: -0.7421604827722543
+#Min: -172.6089747330413
+#Max: 0.9989661588652159
+#Std: 13.804812776136128
+#
+#error from livetime
+#Shape: (30, 16213)
+#Mean: -65.07533764601018
+#Min: -39223.14208394954
+#Max: 13097.376256984862
+#Std: 1142.0640127784686
+
+#corrected low
+#Shape: (30, 16213)
+#Mean: 274.2012203850798
+#Min: 0.0
+#Max: 77994.26313052507
+#Std: 2146.8548520136537
+#
+#corrected high
+#Shape: (30, 16213)
+#Mean: 144.0505450930595
+#Min: -11559.565138109288
+#Max: 36969.41197089473
+#Std: 834.3900972579378

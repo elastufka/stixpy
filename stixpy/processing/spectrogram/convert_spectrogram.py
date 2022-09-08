@@ -256,7 +256,7 @@ def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0,
     spec = Spectrogram(fits_path_data, shift_duration = 1, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, background = False, use_discriminators = use_discriminators)
     dist_factor = 1./(spec.distance**2.)
    
-    spec.initialize_spectrogram(elut_filename =elut_filename)
+    spec.initialize_spectrogram()
 
     if spec.counts.ndim == 2: #it's from a spectrogram
         spec.data_level = 4
@@ -269,9 +269,9 @@ def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0,
     #background
     spec_bk = Spectrogram(fits_path_bk, shift_duration = None, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, background = True, use_discriminators = False)
     spec_bk.control_data.energy_bin_mask = spec.control_data.energy_bin_mask
-    spec_bk.data['pixel_mask'] = spec.pixel_mask
-    spec_bk.data['detector_mask'] = spec.detector_mask
-    spec_bk.initialize_spectrogram(elut_filename, n_energies = spec.n_energies)
+    spec_bk.pixel_mask = spec.pixel_mask
+    spec_bk.detector_mask = spec.detector_mask
+    spec_bk.initialize_spectrogram(n_energies = spec.n_energies)
     spec_bk.n_energies = 32
     spec_bk.correct_counts()
     
@@ -326,8 +326,8 @@ def get_eff_livetime_fraction(spec):
         eff_livetime_fraction = np.sum(spec.counts_before_livetime,axis=0)/spec.counts #,axis=0)
     eff_livetime_fraction[np.isnan(eff_livetime_fraction)] = 1
     #eff_livetime_fraction = np.mean(eff_livetime_fraction, axis = 0)
-    if eff_livetime_fraction.shape != (spec.n_energies, spec.n_times):
-        eff_livetime_fraction_expanded = np.tile(eff_livetime_fraction,spec.n_energies).reshape((spec.n_energies,spec.n_times))
+    if eff_livetime_fraction.shape != (spec.n_times, spec.n_energies): #(spec.n_energies, spec.n_times):
+        eff_livetime_fraction_expanded = np.tile(eff_livetime_fraction,spec.n_energies).reshape((spec.n_energies,spec.n_times)) #unchanged for now
     else:
         eff_livetime_fraction_expanded = eff_livetime_fraction
 
@@ -361,10 +361,10 @@ def get_eff_livetime_fraction(spec):
 
 
 def background_subtract(spectrogram, spectrogram_bk, counts_spec):
-    corrected_counts = spectrogram.counts.T
-    corrected_error = spectrogram.error.T
+    corrected_counts = spectrogram.counts#.T
+    corrected_error = spectrogram.error#.T
 
-    corrected_error_bk = spectrogram_bk.error#[0]#np.sqrt(spectrogram_bk.error[0]**2)
+    corrected_error_bk = spectrogram_bk.error[...,0].T#[0]#np.sqrt(spectrogram_bk.error[0]**2)
     print("corrected_error_bk")
     print_arr_stats(corrected_error_bk)
 
@@ -377,8 +377,8 @@ def background_subtract(spectrogram, spectrogram_bk, counts_spec):
     ntimes = spectrogram.n_times
     energy_bins = spectrogram.e_axis.low_fsw_idx +1 #, spectrogram.e_axis.high_fsw_idx[-1]+1)
     
-    corrected_counts_bk = spectrogram_bk.counts#[:,0] #sum over detectors. shape goes from (30,32) to (32) #np.sum(spectrogram_bk.data['counts'][0][detectors_used][:,pixels_used,:],axis=1)#counts #should already be correct shape
-    spec_in_bk = np.sum(spectrogram_bk.data['counts'][0][detectors_used][:,pixels_used,:],axis=1) #sum over pixels
+    corrected_counts_bk = spectrogram_bk.counts[...,0].T#[:,0] #sum over detectors. shape goes from (30,32) to (32) #np.sum(spectrogram_bk.data['counts'][0][detectors_used][:,pixels_used,:],axis=1)#counts #should already be correct shape
+    spec_in_bk = np.sum(spectrogram_bk.data['counts'][0][:,pixels_used,:][:,:,detectors_used],axis=1).T #sum over pixels
     
     print('original corrected counts and spec_in')
     print_arr_stats(corrected_counts_bk)
@@ -394,20 +394,23 @@ def background_subtract(spectrogram, spectrogram_bk, counts_spec):
         spectrogram.t_axis.duration = np.expand_dims(spectrogram.t_axis.duration,1)
     
     corrected_counts_bk = bk_count_manipulations(corrected_counts_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes)
-    
+    print("corrected_counts_bk after")
+    print_arr_stats(corrected_counts_bk)
     spec_in_bk = bk_count_manipulations(spec_in_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes, name = 'spec_in_bk')
     
     error_bk = bk_count_manipulations(corrected_error_bk, spectrogram.t_axis.duration, spectrogram_bk.data['timedel'], energy_bins, spectrogram.eff_ewidth, ntimes, name = 'error_bk', error = True)
+    print("error_bk after")
+    print_arr_stats(error_bk)
 
     spec_in_corr = corrected_counts - corrected_counts_bk
-    spec_in_uncorr = counts_spec.T - spec_in_bk
+    spec_in_uncorr = counts_spec - spec_in_bk #remove .T from counts_spec
     total_error = np.sqrt(corrected_error**2. + error_bk**2.)
     print(f"total_error nzero: {np.count_nonzero(total_error==0)}")
     
     print_arr_stats(spec_in_corr)
     eff_livetime_fraction_expanded = get_eff_livetime_fraction(spectrogram)
-    spec_in_corr *= eff_livetime_fraction_expanded.T
-    total_error *= eff_livetime_fraction_expanded.T
+    spec_in_corr *= eff_livetime_fraction_expanded #.T
+    total_error *= eff_livetime_fraction_expanded #.T
     
     #energy correction too if needed
     
@@ -420,72 +423,3 @@ def background_subtract(spectrogram, spectrogram_bk, counts_spec):
     rdict = {'spec_in_corr':spec_in_corr,'spec_in_uncorr':spec_in_uncorr,'corrected_counts':corrected_counts, 'corrected_counts_bk':corrected_counts_bk, 'counts_spec':counts_spec, 'spec_in_bk':spec_in_bk,'total_error':total_error,'corrected_error':corrected_error, 'error_bk':error_bk}
     return rdict
 
-def mean_minmax(arr):
-    vals = list(arr.shape)
-    vals.extend([np.mean(arr),np.min(arr),np.max(arr)])
-    return vals
-
-def test_convert_l4(atol = 1e-4):
-    l1_test  ="/Users/wheatley/Documents/Solar/STIX/single_event/220430/solo_L1_stix-sci-xray-spec_20220430T144000-20220430T204502_V01_2204309235-49292.fits"
-    bg_file = "/Users/wheatley/Documents/Solar/STIX/single_event/220430/solo_L1A_stix-sci-xray-l1-2204299453_20220429T202959-20220429T211459_058943_V01.fits"
-    rdict = convert_spectrogram(l1_test, bg_file)
-    spec = rdict['spec']
-    spec_bk = rdict['spec_bk']
-    
-#    corrected_counts_bk          30       16213
-#    Mean:        30.542080
-#    Min:       0.61343993
-#    Max:        2367.1158
-#    Std:        97.374006
-    print('corrected_counts_bk',np.allclose(mean_minmax(rdict['corrected_counts_bk']),[30,16213,30.542080,0.61343993,2367.1158],atol=atol))
-#    spec_In_bk          30       16213
-#    Mean:        30.512577
-#    Min:       0.61284747
-#    Max:        2364.8362
-#    Std:        97.279997
-    print('spec_in_bk',np.allclose(mean_minmax(rdict['spec_in_bk']),[30,16213,30.512577,0.61284747,2364.8362],atol=atol))
-#    error_bk          30       16213
-#    Mean:        5.3090429
-#    Min:       0.55412221
-#    Max:        223.33762
-#    Std:        10.486871
-    print('error_bk',np.allclose(mean_minmax(rdict['error_bk']),[30,16213,5.3090429,0.55412221,223.33762],atol=atol))
-#    corrected_counts          30       16213
-#           215.27700       366.47204       496.66668       303.65831       150.83012       49.267421
-#           32.883653       26.032736       20.109790       7.9740476       10.027424
-#    Mean:        387.82074
-#    Min:        0.0000000
-#    Max:        218026.97
-#    Std:        4105.4163
-#
-    print('corrected_counts',np.allclose(mean_minmax(rdict['corrected_counts']),[30,16213,387.82074,0.0000000,218026.97],atol=atol))
-
-#    corrected_error          30       16213
-#    Mean:        103.20699
-#    Min:        0.0000000
-#    Max:        39223.142
-#    Std:        1139.2524
-    print('corrected_error',np.allclose(mean_minmax(rdict['corrected_error']),[30,16213,103.20699,0.0000000,39223.142],atol=atol))
-    
-    #IDL
-#    spec_in_corr
-#    Mean:        243.87446
-#    Min:       -788.57357
-#    Max:        77993.291
-#    Std:        2147.5142
-
-
-    print('spec_in_corr',np.allclose(mean_minmax(rdict['spec_in_corr']),[30,16213,243.87446,-788.57357,77993.291],atol=atol))
-    print(mean_minmax(rdict['spec_in_corr']))
-#    spec_in_uncorr
-#    Mean:        243.68858
-#    Min:       -788.58983
-#    Max:        77991.548
-#    Std:        2147.4087
-    print('spec_in_uncorr',np.allclose(mean_minmax(rdict['spec_in_uncorr']),[30,16213,243.68858,-788.58983,77991.548],atol=atol))
-#    total_error
-#    Mean:        76.798554
-#    Min:       0.43368515
-#    Max:        18987.020
-    print('total_error',np.allclose(mean_minmax(rdict['total_error']),[30,16213,76.798554, 0.43368515,18987.020],atol=atol))
-    
