@@ -84,33 +84,6 @@ def edge_products(edges):
     #width = width[~np.isinf(width)] #if there's an inf get rid of it
     return out_mean, gmean, width, edges_1, edges_2
 
-def ogip_time_calcs(spec):
-    #TIMESYS = '1979-01-01T00:00:00' / Reference time in YYYY MM DD hh:mm:ss
-    #TIMEUNIT= 'd       '           / Unit for TIMEZERO, TSTARTI and TSTOPI
-
-    #timezero = Time(spec.primary_header['DATE_BEG'], format = 'isot').mjd # zero time used to calculate the n-time event or the n-time
-    #tstart = timezero
-    #tstop = Time(spec.primary_header['DATE_END'], format = 'isot').mjd
-    #mjdref = Time("1970-01-01T00:00:00.000000",format = "isot").mjd # MJD for reference time 01-01-1970
-    #tmjd = Time((spec.data['time']+timezero*86400)/86400, format = 'mjd') #.isot to be readable
-    
-    #use datetimes in t_axis...(will this write to FITS correctly?)
-    timecen = np.array(spec.t_axis.time_mean)
-    
-    factor = 1
-    #units for L1 are centiseconds
-    if spec.primary_header['LEVEL'].strip() == 'L1':
-        factor = 100
-    
-    #calculate time parameters to be passed into the fits file
-    specnum = np.arange(len(timecen)) +1
-    channel = np.tile(np.arange(spec.n_energies), spec.n_times).reshape(spec.n_times,spec.n_energies) # array of n_times x n_channels
-    #timecen =  tmjd + spec.data['timedel']/2.0 #doesn't actually do anything
-    eff_livetime_fraction = spec._get_eff_livetime_fraction(expanded = False)
-    exposure = np.sum((spec.data['timedel']/factor)*eff_livetime_fraction)
-    
-    return {"specnum": specnum, "channel": channel, "timedel": spec.data['timedel']/factor, "timecen": timecen, "exposure": exposure}
-
 def shift_one_timestep(arr_in, axis = 0, shift_step = -1):
     if shift_step == 0:
         return arr_in
@@ -120,4 +93,40 @@ def shift_one_timestep(arr_in, axis = 0, shift_step = -1):
         return shifted_arr[:shift_step]
     else:
         return shifted_arr[shift_step:]
+
+def select_srm_channels(srm_edges, spec_edges):
+    '''get channels of SRM to match channels of spectrum '''
+    srm_list = srm_edges.tolist()
+    keep_channels = [srm_list.index(e1.tolist()) for e1 in spec_edges if e1 in srm_edges]
+    #if len(keep_channels) != len(srm_edges): #pad with zeros
+    #    keep_channels.extend(np.zeros(len(srm_edges)-len(keep_channels)).tolist()) #this is the final mask
+    return keep_channels
+    
+def write_cropped_srm(srm,keep_channels,fitsfilename=None):
+    matrix_names = ['ENERG_LO','ENERG_HI','N_GRP','F_CHAN','N_CHAN','MATRIX']
+    print(f"original shapes: {srm[1].data.MATRIX.shape}")
+    matrix = srm[1].data
+    new_nchan = np.ones(matrix.F_CHAN.size) + len(keep_channels)
+    new_matrix = matrix.MATRIX[:,keep_channels] #can't do this have to make new ones
+    
+    matrix_table = Table([matrix.ENERG_LO, matrix.ENERG_HI, matrix.N_GRP, matrix.F_CHAN, new_nchan.astype('>i4'), new_matrix.astype('>f4')], names = matrix_names)
+    
+    ebounds = srm[2].data
+    ebounds_names = ['CHANNEL','E_MIN','E_MAX']
+    new_channel = ebounds.CHANNEL[keep_channels]
+    #print(new_channel)
+    new_emin = ebounds.E_MIN[keep_channels]
+    new_emax = ebounds.E_MAX[keep_channels]
+
+    ebounds_table = Table([new_channel.astype('>i4'), new_emin.astype('>f4'), new_emax.astype('>f4')], names = ebounds_names)
+
+    #see how it goes without updating the headers manually
+    matrix_HDU = fits.BinTableHDU(data = matrix_table, header = srm[1].header)
+    ebounds_HDU = fits.BinTableHDU(data = ebounds_table, header = srm[2].header)
+    hdul = fits.HDUList([srm[0], matrix_HDU, ebounds_HDU, srm[3]])
+    print(f"final shapes: {srm[1].data.MATRIX.shape}")
+    if not fitsfilename:
+        fitsfilename = f"{srm[1].header['PHAFILE'][:-5]}_{len(keep_channels)}_chans.fits"
+    hdul.writeto(fitsfilename)
+    return fitsfilename
 

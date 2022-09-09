@@ -251,12 +251,11 @@ from ml_utils import print_arr_stats
 #
 #    return Spectrogram(primary_header, spec_data, control, energy, t_axis, e_axis, fits_path, background = background)
 
-def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0, energy_shift = 0, distance = 1.0,  flare_location= [0,0], elut_filename = None, replace_doubles = False, keep_short_bins = True, apply_time_shift = True, to_fits= False, use_discriminators = True):
+def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0, energy_shift = 0, distance = 1.0,  flare_location= [0,0], elut_filename = None, replace_doubles = False, keep_short_bins = True, apply_time_shift = True, to_fits= False, use_discriminators = True, alpha = None):
     """Convert STIX spectrogram for use in XSPEC (translation of stx_convert_spectrogram.pro, which coverts STIX spectrograms for use with OPSEX) """
-    spec = Spectrogram(fits_path_data, shift_duration = 1, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, background = False, use_discriminators = use_discriminators)
-    dist_factor = 1./(spec.distance**2.)
-   
-    spec.initialize_spectrogram()
+    spec = Spectrogram(fits_path_data, shift_duration = shift_duration, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, background = False, use_discriminators = use_discriminators, alpha = alpha)
+    dist_factor = 1./(spec.distance**2.) #when is this used?
+    spec.apply_elut()
 
     if spec.counts.ndim == 2: #it's from a spectrogram
         spec.data_level = 4
@@ -271,7 +270,7 @@ def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0,
     spec_bk.control_data.energy_bin_mask = spec.control_data.energy_bin_mask
     spec_bk.pixel_mask = spec.pixel_mask
     spec_bk.detector_mask = spec.detector_mask
-    spec_bk.initialize_spectrogram(n_energies = spec.n_energies)
+    spec_bk.apply_elut(n_energies = spec.n_energies)
     spec_bk.n_energies = 32
     spec_bk.correct_counts()
     
@@ -279,15 +278,18 @@ def convert_spectrogram(fits_path_data, fits_path_bk = None, shift_duration = 0,
     #extra background corrections - stx_convert_science_data2ospex 153-190
     rdict = background_subtract(spec, spec_bk, counts_spec)
     
+    spec.counts = rdict['spec_in_corr']
+    spec.error = rdict['total_error'] #for some reason this doesn't overwrite
+    spec.total_error = rdict['total_error']
+    spec.history += f"+background_subtracted_{fits_path_bk}"
+    
     if not to_fits: #for testing
-        rdict['spec']=spec
-        rdict['spec_bk']=spec_bk
-        return rdict
+        return spec
     
     else: #write background-corrected counts to fits
-        spec.counts = rdict['spec_in_corr']
-        spec.error = rdict['total_error'].T
-        spec.spectrum_to_fits(f"stx_spectrum_{spec.t_axis.time_mean[0] :%Y%m%d_%H%M%S}.fits")
+        fitsfilename = f"stx_spectrum_{spec.t_axis.time_mean[0] :%Y%m%d_%H%M%S}.fits"
+        spec.spectrum_to_fits(fitsfilename)
+        return f"{os.getcwd()}/{fitsfilename}"
 #    #data_dims = np.array([n_energies, 1, 1, n_times])
 #
 #    # Get the rcr states and the times of rcr changes from the ql_lightcurves structure
@@ -374,6 +376,7 @@ def background_subtract(spectrogram, spectrogram_bk, counts_spec):
     total_error = np.sqrt(corrected_error**2. + error_bk**2.)
 
     eff_livetime_fraction_expanded = spectrogram._get_eff_livetime_fraction()
+    spectrogram.eff_livetime_fraction = eff_livetime_fraction_expanded[0]
     spec_in_corr *= eff_livetime_fraction_expanded.T
     total_error *= eff_livetime_fraction_expanded.T
     

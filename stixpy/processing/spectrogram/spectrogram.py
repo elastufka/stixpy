@@ -7,6 +7,7 @@ from .spectrogram_utils import *
 from .livetime import *
 from astropy.table import Table
 from .spectrogram_axes import stx_energy_axis, stx_time_axis
+from .write_spectrum2fits import *
 from matplotlib import pyplot as plt
 from ml_utils import print_arr_stats
 
@@ -16,6 +17,7 @@ class Spectrogram:
         self.background = background
         self.det_ind = det_ind
         self.pix_ind = pix_ind
+        self.history = "init"
         self._from_fits(energy_shift = energy_shift, use_discriminators = use_discriminators, replace_doubles = replace_doubles, keep_short_bins = keep_short_bins, shift_duration = shift_duration, alpha = alpha, time_bin_filename = time_bin_filename)
         
     def _alpha_from_header(self, primary_header):
@@ -139,8 +141,11 @@ class Spectrogram:
         #nenergies = energies_used.size
 
         hstart_str, hstart_time = get_hstart_time(primary_header)
-        if not alpha:
+        
+        if alpha is None:
             self._alpha_from_header(primary_header)
+        else:
+            self.alpha = alpha
 
         #trigger_zero should always be 0 as far as I know... it gets modified by mreadfits 2.26
     #    try:
@@ -169,8 +174,8 @@ class Spectrogram:
 
         if shift_duration is not None and hstart_time < shift_duration_dt: # Shift counts and triggers by one time step - for use in background file?
             shift_step = -1 #otherwise default is zero and nothing happens
-          
-        print('shift step', shift_step)
+            self.history += f"+time_shift_step={shift_step}"
+        
         axis = 0 if self.alpha else -1 #time axis is last for pixel data...need to test this
         
         self.counts = shift_one_timestep(data.data.counts, shift_step = shift_step, axis = axis)
@@ -186,6 +191,7 @@ class Spectrogram:
         if not keep_short_bins:
             # Remove short time bins with low counts
             self._remove_short_bins(hstart_str, replace_doubles = replace_doubles)
+            self.history += "+remove_short_bins"
 
         rcr = data.data.rcr # byte array
         if self.alpha: # things specific to L1A files
@@ -260,7 +266,9 @@ class Spectrogram:
         self.t_axis = t_axis
         self.e_axis = e_axis
         self.distance = distance
+        self.time_shift = time_shift
         self.hstart_str = hstart_str
+        self.request_id = control.data.request_id[0]
         
     def apply_elut(self, elut_filename = None, n_energies = None):
         """All the stuff that happens after stx_read_..._fits_file and before stx_convert_science_data2ospex. """
@@ -340,7 +348,7 @@ class Spectrogram:
         self.detector_mask = detector_mask_used
         self.rcr = self.data['rcr']
         self.error = counts_err
-        
+        self.history += f"+applied_{self.elut_filename}"
         
     def correct_counts(self):
 
@@ -372,6 +380,7 @@ class Spectrogram:
         self.counts = corrected_counts
         self.error = corrected_error
         self.livetime_fraction = livetime_frac
+        self.history += "+livetime_correction"
         
     def _get_eff_livetime_fraction(self, expanded = True):
         if self.data_level == 4:
@@ -406,45 +415,56 @@ class Spectrogram:
         self.error = self.error[chan_idx,:]
     
     def spectrum_to_fits(self, fitsfilename, srm_file = "/Users/wheatley/Documents/Solar/STIX/demo_feb22/stx_srm_20210417_1531.fits"):
-        reference_file = "/Users/wheatley/Documents/Solar/STIX/demo_feb22/stx_spectrum_20210417_1531.fits"
+        
         srm = fits.open(srm_file) # Need to match the number of channels in here!
         self.select_energy_channels(srm[2].data.E_MIN)
+        #should also trim the response matrix if the number of channels in the spectrum are fewer!
+        srm_nenergies = srm[1].data.N_CHAN[0]
+        if srm_nenergies != self.n_energies:
+            srm_edges = np.array([[mn,mx] for mn,mx in zip(srm[2].data.E_MIN, srm[2].data.E_MAX)])
+            srm_channels = select_srm_channels(srm_edges, spec.e_axis.edges_2) #return dict?
+            respfile = write_cropped_srm(srm,srm_channels)
+            
+        #should also get the effective area from here,
+        else:
+            respfile = srm_file[srm_file.rfind('/')+1:]
         srm.close()
-        
-        reference_fits = fits.open(reference_file)#self.filename)
+    
         timedict = ogip_time_calcs(self)
+        self.exposure = timedict['exposure']
         # Make the primary header
-        primary_header = reference_fits[0].header.copy()
-        # Update keywords that need updating
+        primary_header = make_stix_header(self,primary = True)
 
         # Make the rate table
-        rate_header = reference_fits[1].header.copy()
-        # Update keywords that need updating
-        rate_header['DETCHANS'] = self.n_energies
-        rate_header['ONTIME'] = timedict['exposure']
-        rate_header['EXPOSURE'] = timedict['exposure'] #should this be an int?
-        #also update: timezero, tstarti, tstartf, tstopi, tstopf, telapse
         rate_names = ['RATE', 'STAT_ERR', 'CHANNEL', 'SPEC_NUM', 'LIVETIME', 'TIME', 'TIMEDEL']
-        rate_table = Table([self.counts, self.error.T, timedict['channel'].astype('>i4'), timedict['specnum'].astype('>i2'), self.livetime_fraction, Time(timedict['timecen']).mjd, timedict['timedel'].astype('>f4')], names = rate_names) #is spec.counts what we want?
+        
+        try:
+            eff_livetime_fraction = self.eff_livetime_fraction
+        except AttributeError:
+            eff_livetime_fraction = self._get_eff_livetime_fraction(expanded = False) #can't do this after backgrounds subtraction, counts will be wrong...
+
+        rate_table = Table([self.counts, self.total_error, timedict['channel'].astype('>i4'), timedict['specnum'].astype('>i2'), eff_livetime_fraction, Time(timedict['timecen']).mjd, timedict['timedel'].astype('>f4')], names = rate_names)
 
         # Make the energy channel table
-        energy_header = reference_fits[2].header.copy()
         # Update keywords that need updating
         ct_edges_2 = self.e_axis.edges_2
         energy_names = ('CHANNEL', 'E_MIN', 'E_MAX')
         energy_table = Table([timedict['channel'][0].astype('>i4'), ct_edges_2[:,0].astype('>f4'), ct_edges_2[:,1].astype('>f4')], names = energy_names)
 
         # Make the attenuator state table
-    #     att_header = reference_fits[3].header.copy()
     #     # Update keywords that need updating
     #     att_names = ('SP_ATTEN_STATE$$TIME', 'SP_ATTEN_STATE$$STATE')
     #     att_table = Table(spec[''], spec['e_axis'].e_min, names = att_names)
-        reference_fits.close()
 
         primary_HDU = fits.PrimaryHDU(header = primary_header)
-        rate_HDU = fits.BinTableHDU(header = rate_header, data = rate_table)
-        energy_HDU = fits.BinTableHDU(header = energy_header, data = energy_table)
+        rate_HDU = fits.BinTableHDU(data = rate_table)
+        energy_HDU = fits.BinTableHDU(data = energy_table)
+        
+        # fill out headers
+        make_rate_header(rate_HDU.header,self,respfile=respfile) #should update in place
+        make_stix_header(self,hdr=energy_HDU.header,extname='ENEBAND',respfile=respfile)
+        
         hdul = fits.HDUList([primary_HDU, rate_HDU, energy_HDU]) #, att_header, att_table])
         hdul.writeto(fitsfilename)
-        
+        print(f"Spectrogram written to {os.getcwd()}/{fitsfilename}")
     
