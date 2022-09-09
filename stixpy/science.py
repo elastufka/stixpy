@@ -98,7 +98,7 @@ class PixelMasks(PPrintMixin):
         text = f'{self.__class__.__name__}\n'
         for m, i in zip(self.masks, self.indices):
             text += f'    {self._pprint_indices(i)}: ' \
-                    f'[{str(np.where(m.shape[0], np.eye(*m.shape), np.full(m.shape, "_")))}]\n'
+                    f'[{str(np.where(m.shape[0], m, np.full(m.shape, "_")))}]\n'
         return text
 
 
@@ -106,7 +106,7 @@ class SpectrogramPlotMixin:
     """
     Spectrogram plot mixin providing spectrogram plotting for pixel data.
     """
-    def plot_spectrogram(self, axes=None, time_indices=None, energy_indices=None, **kwargs):
+    def plot_spectrogram(self, axes=None, time_indices=None, energy_indices=None, **plot_kwargs):
         """
         Plot a spectrogram for the selected time and energies.
 
@@ -122,6 +122,8 @@ class SpectrogramPlotMixin:
             If an 1xN array will be treated as mask if 2XN array will sum data between given
             indices. For example `energy_indices=[0, 2, 5]` would return only the first, third and
             sixth times while `energy_indices=[[0, 2],[3, 5]]` would sum the data between.
+        **plot_kwargs : `dict`
+            Any additional arguments are passed to :meth:`~matplotlib.axes.Axes.pcolormesh`.
 
         Returns
         -------
@@ -149,8 +151,10 @@ class SpectrogramPlotMixin:
         t_edges = Time(np.concatenate(
             [times - timedeltas.reshape(-1) / 2, times[-1] + timedeltas.reshape(-1)[-1:] / 2]))
 
+        pcolor_kwargs = {'norm':LogNorm(), 'shading':'flat'}
+        pcolor_kwargs.update(plot_kwargs)
         im = axes.pcolormesh(t_edges.datetime, e_edges[1:-1], counts[:, 0, 0, 1:-1].T.value,
-               shading='flat', norm=LogNorm())
+                             **pcolor_kwargs)
 
         #axes.colorbar(im).set_label(format(counts.unit))
         axes.xaxis_date()
@@ -359,15 +363,16 @@ class ScienceData:
             self.pixel_masks = PixelMasks(self.data['pixel_masks'])
         if 'energy_bin_mask' in self.control.colnames:
             self.energy_masks = EnergyMasks(self.control['energy_bin_mask'])
-            self.dE = (energies['e_high'] - energies['e_low'])
-            self.dE[[0, -1]] = 1 * u.keV
+            self.dE = (energies['e_high'] - energies['e_low'])[self.energy_masks.masks[0] == 1]
+            #
 
     @property
     def time_range(self):
         """
         A `sunpy.time.TimeRange` for the data.
         """
-        return TimeRange(self.data['time'].min(), self.data['time'].max())
+        return TimeRange(self.data['time'][0] - self.data['timedel'][0]/2,
+                         self.data['time'][-1] + self.data['timedel'][-1]/2)
 
     @property
     def pixels(self):
@@ -388,7 +393,7 @@ class ScienceData:
         """
         A `astropy.table.Table` object representing the energies contained in the data.
         """
-        return self.energies_
+        return self.energies_[self.energy_masks.masks[0] == 1]
 
     @property
     def times(self):
@@ -475,12 +480,12 @@ class ScienceData:
         if energy_indices is not None:
             energy_indices = np.asarray(energy_indices)
             if energy_indices.ndim == 1:
-                energy_mask = np.full(32, False)
+                energy_mask = np.full(shape[-1], False)
                 energy_mask[energy_indices] = True
                 counts = counts[..., energy_mask]
                 counts_var = counts_var[..., energy_mask]
                 e_norm = self.dE[energy_mask]
-                energies = self.energies_[energy_mask]
+                energies = self.energies[energy_mask]
             elif energy_indices.ndim == 2:
                 counts = np.concatenate([np.sum(counts[..., el:eh+1], axis=-1, keepdims=True)
                                          for el, eh in energy_indices], axis=-1)
@@ -633,33 +638,22 @@ class RawPixelData(ScienceData, PixelPlotMixin, TimesSeriesPlotMixin, Spectrogra
     >>> from stixpy.science import ScienceData
     >>> raw_pd = ScienceData.from_fits(test.STIX_SCI_XRAY_RPD)
     >>> raw_pd
-    RawPixelData   <sunpy.time.timerange.TimeRange object at ...>
-        Start: 2020-05-06 00:00:01
-        End:   2020-05-06 00:00:17
+    RawPixelData   <sunpy.time.timerange.TimeRange object at ...
+        Start: 2020-05-05 23:59:59
+        End:   2020-05-06 00:00:19
         Center:2020-05-06 00:00:09
-        Duration:0.00018518518518517713 days or
-               0.004444444444444251 hours or
-               0.26666666666665506 minutes or
-               15.999999999999304 seconds
-    DetectorMasks
+    Duration:0.00023148148148144365 days or
+               0.005555555555554648 hours or
+               0.33333333333327886 minutes or
+               19.99999999999673 seconds
+        DetectorMasks
         [0...4]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
     <BLANKLINE>
         PixelMasks
-        [0...4]: [[['1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0']]]
+        [0...4]: [['1' '1' '1' '1' '1' '1' '1' '1' '1' '1' '1' '1']]
     <BLANKLINE>
-    EnergyMasks
-    [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
+        EnergyMasks
+        [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
     <BLANKLINE>
     """
     pass
@@ -675,34 +669,33 @@ class CompressedPixelData(ScienceData, PixelPlotMixin, TimesSeriesPlotMixin, Spe
     >>> from stixpy.science import ScienceData
     >>> compressed_pd = ScienceData.from_fits(test.STIX_SCI_XRAY_CPD)
     >>> compressed_pd
-    CompressedPixelData   <sunpy.time.timerange.TimeRange object at ...>
-        Start: 2020-05-06 00:00:01
-        End:   2020-05-06 00:00:17
+    CompressedPixelData   <sunpy.time.timerange.TimeRange object at ...
+        Start: 2020-05-05 23:59:59
+        End:   2020-05-06 00:00:19
         Center:2020-05-06 00:00:09
-        Duration:0.00018518518518517713 days or
-               0.004444444444444251 hours or
-               0.26666666666665506 minutes or
-               15.999999999999304 seconds
-    DetectorMasks
+        Duration:0.00023148148148144365 days or
+               0.005555555555554648 hours or
+               0.33333333333327886 minutes or
+               19.99999999999673 seconds
+        DetectorMasks
         [0...4]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
     <BLANKLINE>
-    PixelMasks
-        [0...4]: [[['1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0']]]
+        PixelMasks
+        [0...4]: [[['1' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0']
+     ['0' '1' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0']
+     ['0' '0' '1' '0' '0' '0' '0' '0' '0' '0' '0' '0']
+     ['0' '0' '0' '1' '0' '0' '0' '0' '0' '0' '0' '0']
+     ['0' '0' '0' '0' '1' '0' '0' '0' '0' '0' '0' '0']
+     ['0' '0' '0' '0' '0' '1' '0' '0' '0' '0' '0' '0']
+     ['0' '0' '0' '0' '0' '0' '1' '0' '0' '0' '0' '0']
+     ['0' '0' '0' '0' '0' '0' '0' '1' '0' '0' '0' '0']
+     ['0' '0' '0' '0' '0' '0' '0' '0' '1' '0' '0' '0']
+     ['0' '0' '0' '0' '0' '0' '0' '0' '0' '1' '0' '0']
+     ['0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '1' '0']
+     ['0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '1']]]
     <BLANKLINE>
-    EnergyMasks
+        EnergyMasks
         [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
-    <BLANKLINE>
     """
     pass
 
@@ -718,22 +711,22 @@ class SummedCompressedPixelData(ScienceData, PixelPlotMixin, TimesSeriesPlotMixi
     >>> from stixpy.science import ScienceData
     >>> summed_pd = ScienceData.from_fits(test.STIX_SCI_XRAY_SCPD)
     >>> summed_pd
-    SummedCompressedPixelData   <sunpy.time.timerange.TimeRange object at ...>
-        Start: 2020-05-06 00:00:01
-        End:   2020-05-06 00:00:17
+    SummedCompressedPixelData   <sunpy.time.timerange.TimeRange object at ...
+        Start: 2020-05-05 23:59:59
+        End:   2020-05-06 00:00:19
         Center:2020-05-06 00:00:09
-        Duration:0.00018518518518517713 days or
-               0.004444444444444251 hours or
-               0.26666666666665506 minutes or
-               15.999999999999304 seconds
+        Duration:0.00023148148148144365 days or
+               0.005555555555554648 hours or
+               0.33333333333327886 minutes or
+               19.99999999999673 seconds
         DetectorMasks
         [0...4]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
     <BLANKLINE>
         PixelMasks
-        [0...4]: [[['1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']]]
+        [0...4]: [[['0' '0' '0' '1' '0' '0' '0' '1' '0' '0' '0' '1']
+     ['0' '0' '1' '0' '0' '0' '1' '0' '0' '0' '1' '0']
+     ['0' '1' '0' '0' '0' '1' '0' '0' '0' '1' '0' '0']
+     ['1' '0' '0' '0' '1' '0' '0' '0' '1' '0' '0' '0']]]
     <BLANKLINE>
         EnergyMasks
         [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
@@ -854,30 +847,16 @@ class Spectrogram(ScienceData, TimesSeriesPlotMixin, SpectrogramPlotMixin):
     >>> from stixpy.science import ScienceData
     >>> spectogram = ScienceData.from_fits(test.STIX_SCI_XRAY_SPEC)
     >>> spectogram
-    Spectrogram   <sunpy.time.timerange.TimeRange object at ...>
-        Start: 2020-05-06 00:00:01
-        End:   2020-05-06 00:00:17
-        Center:2020-05-06 00:00:09
-        Duration:0.00018518518518517713 days or
-               0.004444444444444251 hours or
-               0.26666666666665506 minutes or
-               15.999999999999304 seconds
+    Spectrogram   <sunpy.time.timerange.TimeRange object at ...
+        Duration:0.00023148148148144365 days or
+               0.005555555555554648 hours or
+               0.33333333333327886 minutes or
+               19.99999999999673 seconds
         DetectorMasks
         [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
     <BLANKLINE>
         PixelMasks
-        [0]: [[['1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0' '0.0']
-     ['0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '0.0' '1.0']]]
+        [0]: [['0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0' '0']]
     <BLANKLINE>
         EnergyMasks
         [0]: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]
